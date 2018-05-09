@@ -8,9 +8,9 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 0}
-  m_Name: CustomRP
-  m_EditorClassIdentifier: Assembly-CSharp:CustomRP:CustomRenderPipelineAsset
+  m_Script: {fileID: 11500000, guid: e2bb0112b144b014b99b943a5dcd37fd, type: 3}
+  m_Name: CustomRenderPipeline
+  m_EditorClassIdentifier: 
   kAssetVersion: 2
   m_MaxPixelLights: 4
   m_SupportsVertexLight: 0
