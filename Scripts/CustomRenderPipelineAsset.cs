@@ -1,11 +1,6 @@
 ﻿using UnityEngine;
-using UnityEngine.Rendering;
-using UnityEngine.Rendering.PostProcessing;
 using UnityEngine.Experimental.Rendering;
 using UnityEngine.Experimental.Rendering.LightweightPipeline;
-using System.Collections.Generic;
-using UnityEngine.XR;
-using System.Collections;
 #if UNITY_EDITOR
 using System;
 using UnityEditor;
@@ -114,6 +109,7 @@ namespace CustomRP
             }
         }
 #endif
+
         LightweightPipelineResources resources
         {
             get
