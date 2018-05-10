@@ -162,6 +162,7 @@ namespace CustomRP
 
             m_LightManager = new LightManager(asset);
             m_ShadowMapManager = new ShadowManager(asset);
+            m_RendererPerCamera = new RendererPerCamera();
         }
 
         public override void Dispose()
@@ -258,7 +259,7 @@ namespace CustomRP
                 context.SetupCameraProperties(m_CurrCamera, stereoEnabled);
 
                 if (LightweightUtils.HasFlag(frameRenderingConfiguration, FrameRenderingConfiguration.DepthPrePass))
-                    DepthPass(ref context, frameRenderingConfiguration);
+                    DepthPass(ref context, frameRenderingConfiguration, m_CullResults.visibleRenderers);
 
                 if (shadows)
                     m_ShadowMapManager.ShadowCollectPass(visibleLights, ref context, ref lightData, frameRenderingConfiguration, m_CurrCamera);
@@ -266,13 +267,13 @@ namespace CustomRP
                     m_ShadowMapManager.SmallShadowBuffer(ref context);
 
 
-                ForwardPass(visibleLights, frameRenderingConfiguration, ref context, ref lightData, stereoEnabled);
+                ForwardPass(visibleLights, frameRenderingConfiguration, ref context, ref lightData, stereoEnabled, ref m_CullResults);
 
 
                 cmd.name = "After Camera Render";
 #if UNITY_EDITOR
                 if (sceneViewCamera)
-                    CopyTexture(cmd, CameraRenderTargetID.depth, BuiltinRenderTextureType.CameraTarget, m_CopyDepthMaterial, true);
+                    CopyTexture(cmd, CameraRenderTargetID.depth, BuiltinRenderTextureType.CameraTarget, m_CopyDepthMaterial, m_CopyTextureSupport, true);
 #endif
                 cmd.ReleaseTemporaryRT(m_ShadowMapManager.ScreenSpaceShadowMapRTID);
                 cmd.ReleaseTemporaryRT(CameraRenderTargetID.depthCopy);
@@ -288,7 +289,7 @@ namespace CustomRP
             }
         }
 
-        private void DepthPass(ref ScriptableRenderContext context, FrameRenderingConfiguration frameRenderingConfiguration)
+        private void DepthPass(ref ScriptableRenderContext context, FrameRenderingConfiguration frameRenderingConfiguration, FilterResults visibleRenderers)
         {
             CommandBuffer cmd = CommandBufferPool.Get("Depth Prepass");
             SetRenderTarget(cmd, m_DepthRT, ClearFlag.Depth);
@@ -305,26 +306,26 @@ namespace CustomRP
 
             StereoRendering.Start(ref context, frameRenderingConfiguration, m_CurrCamera);
 
-            context.DrawRenderers(m_CullResults.visibleRenderers, ref opaqueDrawSettings, opaqueFilterSettings);
+            context.DrawRenderers(visibleRenderers, ref opaqueDrawSettings, opaqueFilterSettings);
 
             StereoRendering.Stop(ref context, frameRenderingConfiguration, m_CurrCamera);
         }
 
-        private void ForwardPass(List<VisibleLight> visibleLights, FrameRenderingConfiguration frameRenderingConfiguration, ref ScriptableRenderContext context, ref LightData lightData, bool stereoEnabled)
+        private void ForwardPass(List<VisibleLight> visibleLights, FrameRenderingConfiguration frameRenderingConfiguration, ref ScriptableRenderContext context, ref LightData lightData, bool stereoEnabled, ref CullResults cullResults)
         {
-            SetupShaderConstants(visibleLights, ref context, ref lightData);
+            SetupShaderConstants(visibleLights, ref context, ref lightData, ref cullResults);
 
             RendererConfiguration rendererSettings = GetRendererSettings(ref lightData);
 
             BeginForwardRendering(ref context, frameRenderingConfiguration);
-            RenderOpaques(ref context, rendererSettings);
+            RenderOpaques(ref context, rendererSettings, cullResults.visibleRenderers);
             AfterOpaque(ref context, frameRenderingConfiguration);
-            RenderTransparents(ref context, rendererSettings);
+            RenderTransparents(ref context, rendererSettings, cullResults.visibleRenderers);
             AfterTransparent(ref context, frameRenderingConfiguration);
             EndForwardRendering(ref context, frameRenderingConfiguration);
         }
 
-        private void RenderOpaques(ref ScriptableRenderContext context, RendererConfiguration settings)
+        private void RenderOpaques(ref ScriptableRenderContext context, RendererConfiguration settings, FilterResults visibleRenderers)
         {
             var opaqueDrawSettings = new DrawRendererSettings(m_CurrCamera, m_LitPassName);
             opaqueDrawSettings.SetShaderPassName(1, m_UnlitPassName);
@@ -336,10 +337,10 @@ namespace CustomRP
                 renderQueueRange = RenderQueueRange.opaque
             };
 
-            context.DrawRenderers(m_CullResults.visibleRenderers, ref opaqueDrawSettings, opaqueFilterSettings);
+            context.DrawRenderers(visibleRenderers, ref opaqueDrawSettings, opaqueFilterSettings);
 
             // Render objects that did not match any shader pass with error shader
-            RenderObjectsWithError(ref context, opaqueFilterSettings, SortFlags.None);
+            RenderObjectsWithError(ref context, opaqueFilterSettings, SortFlags.None, visibleRenderers);
 
             if (m_CurrCamera.clearFlags == CameraClearFlags.Skybox)
                 context.DrawSkybox(m_CurrCamera);
@@ -377,7 +378,7 @@ namespace CustomRP
 
             if (LightweightUtils.HasFlag(config, FrameRenderingConfiguration.DepthCopy))
             {
-                CopyTexture(cmd, m_DepthRT, m_CopyDepth, m_CopyDepthMaterial);
+                CopyTexture(cmd, m_DepthRT, m_CopyDepth, m_CopyDepthMaterial, m_CopyTextureSupport);
                 depthRT = m_CopyDepth;
                 setRenderTarget = true;
             }
@@ -388,7 +389,7 @@ namespace CustomRP
             CommandBufferPool.Release(cmd);
         }
 
-        private void RenderTransparents(ref ScriptableRenderContext context, RendererConfiguration config)
+        private void RenderTransparents(ref ScriptableRenderContext context, RendererConfiguration config, FilterResults visibleRenderers)
         {
             var transparentSettings = new DrawRendererSettings(m_CurrCamera, m_LitPassName);
             transparentSettings.SetShaderPassName(1, m_UnlitPassName);
@@ -400,10 +401,10 @@ namespace CustomRP
                 renderQueueRange = RenderQueueRange.transparent
             };
 
-            context.DrawRenderers(m_CullResults.visibleRenderers, ref transparentSettings, transparentFilterSettings);
+            context.DrawRenderers(visibleRenderers, ref transparentSettings, transparentFilterSettings);
 
             // Render objects that did not match any shader pass with error shader
-            RenderObjectsWithError(ref context, transparentFilterSettings, SortFlags.None);
+            RenderObjectsWithError(ref context, transparentFilterSettings, SortFlags.None, visibleRenderers);
         }
 
         private void AfterTransparent(ref ScriptableRenderContext context, FrameRenderingConfiguration config)
@@ -418,7 +419,7 @@ namespace CustomRP
         }
 
         [System.Diagnostics.Conditional("DEVELOPMENT_BUILD"), System.Diagnostics.Conditional("UNITY_EDITOR")]
-        private void RenderObjectsWithError(ref ScriptableRenderContext context, FilterRenderersSettings filterSettings, SortFlags sortFlags)
+        private void RenderObjectsWithError(ref ScriptableRenderContext context, FilterRenderersSettings filterSettings, SortFlags sortFlags, FilterResults visibleRenderers)
         {
             if (m_ErrorMaterial != null)
             {
@@ -429,7 +430,7 @@ namespace CustomRP
                 errorSettings.sorting.flags = sortFlags;
                 errorSettings.rendererConfiguration = RendererConfiguration.None;
                 errorSettings.SetOverrideMaterial(m_ErrorMaterial, 0);
-                context.DrawRenderers(m_CullResults.visibleRenderers, ref errorSettings, filterSettings);
+                context.DrawRenderers(visibleRenderers, ref errorSettings, filterSettings);
             }
         }
 
@@ -579,10 +580,10 @@ namespace CustomRP
                 cmd.GetTemporaryRT(CameraRenderTargetID.copyColor, colorRTDesc, FilterMode.Point);
         }
 
-        private void SetupShaderConstants(List<VisibleLight> visibleLights, ref ScriptableRenderContext context, ref LightData lightData)
+        private void SetupShaderConstants(List<VisibleLight> visibleLights, ref ScriptableRenderContext context, ref LightData lightData, ref CullResults cullResults)
         {
             CommandBuffer cmd = CommandBufferPool.Get("SetupShaderConstants");
-            m_LightManager.SetupShaderLightConstants(cmd, visibleLights, ref lightData, ref m_CullResults);
+            m_LightManager.SetupShaderLightConstants(cmd, visibleLights, ref lightData, ref cullResults);
             SetShaderKeywords(cmd, ref lightData, visibleLights);
             context.ExecuteCommandBuffer(cmd);
             CommandBufferPool.Release(cmd);
@@ -770,9 +771,9 @@ namespace CustomRP
             }
         }
 
-        private void CopyTexture(CommandBuffer cmd, RenderTargetIdentifier sourceRT, RenderTargetIdentifier destRT, Material copyMaterial, bool forceBlit = false)
+        private static void CopyTexture(CommandBuffer cmd, RenderTargetIdentifier sourceRT, RenderTargetIdentifier destRT, Material copyMaterial, CopyTextureSupport copyTextureSupport, bool forceBlit = false)
         {
-            if (m_CopyTextureSupport != CopyTextureSupport.None && !forceBlit)
+            if (copyTextureSupport != CopyTextureSupport.None && !forceBlit)
                 cmd.CopyTexture(sourceRT, destRT);
             else
                 cmd.Blit(sourceRT, destRT, copyMaterial);
