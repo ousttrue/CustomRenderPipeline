@@ -43,6 +43,7 @@ namespace CustomRP
         private LightManager m_LightManager;
         private ShadowManager m_ShadowManager;
         private TextureUtil m_TextureUtil;
+        private CullingUtil m_CullingUtil;
 
         public CustomRenderPipeline(CustomRenderPipelineAsset asset)
         {
@@ -89,6 +90,7 @@ namespace CustomRP
             m_LightManager = new LightManager(asset);
             m_ShadowManager = new ShadowManager(asset);
             m_TextureUtil = new TextureUtil(asset);
+            m_CullingUtil = new CullingUtil();
         }
 
         public override void Dispose()
@@ -106,7 +108,7 @@ namespace CustomRP
 #endif
         }
 
-        CullResults m_CullResults;
+
         public override void Render(ScriptableRenderContext context, Camera[] cameras)
         {
             base.Render(context, cameras);
@@ -121,7 +123,11 @@ namespace CustomRP
             {
                 RenderPipeline.BeginCameraRendering(camera);
 
-                Render(context, camera);
+                bool sceneViewCamera = camera.cameraType == CameraType.SceneView;
+                bool stereoEnabled = XRSettings.isDeviceActive && !sceneViewCamera && (camera.stereoTargetEye == StereoTargetEyeMask.Both);
+                bool IsOffscreenCamera = camera.targetTexture != null && camera.cameraType != CameraType.SceneView;
+
+                Render(ref context, camera, sceneViewCamera, stereoEnabled, IsOffscreenCamera);
 
                 context.Submit();
 
@@ -129,39 +135,25 @@ namespace CustomRP
             }
         }
 
-        void Render(ScriptableRenderContext context, Camera camera)
+        void Render(ref ScriptableRenderContext context, Camera camera, bool sceneViewCamera, bool stereoEnabled, bool IsOffscreenCamera)
         {
             ///
             /// culling
             ///
-            bool sceneViewCamera = camera.cameraType == CameraType.SceneView;
-            bool stereoEnabled = XRSettings.isDeviceActive && !sceneViewCamera && (camera.stereoTargetEye == StereoTargetEyeMask.Both);
-            bool IsOffscreenCamera = camera.targetTexture != null && camera.cameraType != CameraType.SceneView;
-
-            ScriptableCullingParameters cullingParameters;
-            if (!CullResults.GetCullingParameters(camera, stereoEnabled, out cullingParameters))
+            if (!m_CullingUtil.Cull(camera, ref context, sceneViewCamera, stereoEnabled, m_ShadowManager.MaxShadowDistance))
+            {
                 return;
-
-            var cmd = CommandBufferPool.Get("");
-            cullingParameters.shadowDistance = Mathf.Min(m_ShadowManager.MaxShadowDistance, camera.farClipPlane);
-
-#if UNITY_EDITOR
-            // Emit scene view UI
-            if (sceneViewCamera)
-                ScriptableRenderContext.EmitWorldGeometryForSceneView(camera);
-#endif
-
-            CullResults.Cull(ref cullingParameters, context, ref m_CullResults);
+            }
+            var visibleLights = m_CullingUtil.CullResults.visibleLights;
 
             ///
             /// setup lights & shadows
             ///
-            List<VisibleLight> visibleLights = m_CullResults.visibleLights;
             LightData lightData;
             m_LightManager.InitializeLightData(visibleLights, out lightData, camera);
 
             bool shadows = m_ShadowManager.ShadowPass(visibleLights, ref context, ref lightData,
-                m_CullResults, m_LightManager.GetLightUnsortedIndex(lightData.mainLightIndex), camera.backgroundColor);
+                m_CullingUtil.CullResults, m_LightManager.GetLightUnsortedIndex(lightData.mainLightIndex), camera.backgroundColor);
 
             ///
             /// setup
@@ -181,7 +173,7 @@ namespace CustomRP
             context.SetupCameraProperties(camera, stereoEnabled);
 
             if (LightweightUtils.HasFlag(frameRenderingConfiguration, FrameRenderingConfiguration.DepthPrePass))
-                DepthPass(ref context, frameRenderingConfiguration, m_CullResults.visibleRenderers, camera);
+                DepthPass(ref context, frameRenderingConfiguration, m_CullingUtil.CullResults.visibleRenderers, camera);
 
             if (shadows)
                 m_ShadowManager.ShadowCollectPass(visibleLights, ref context, ref lightData, frameRenderingConfiguration, camera);
@@ -198,8 +190,9 @@ namespace CustomRP
             /// * AfterTransparent
             /// * PostEffect
             ///
-            ForwardPass(visibleLights, frameRenderingConfiguration, ref context, ref lightData, stereoEnabled, ref m_CullResults, camera, IsOffscreenCamera);
+            ForwardPass(visibleLights, frameRenderingConfiguration, ref context, ref lightData, stereoEnabled, m_CullingUtil.CullResults, camera, IsOffscreenCamera);
 
+            var cmd = CommandBufferPool.Get("");
             cmd.name = "After Camera Render";
 #if UNITY_EDITOR
             if (sceneViewCamera)
@@ -236,7 +229,7 @@ namespace CustomRP
             StereoRendering.Stop(ref context, frameRenderingConfiguration, camera);
         }
 
-        private void ForwardPass(List<VisibleLight> visibleLights, FrameRenderingConfiguration frameRenderingConfiguration, ref ScriptableRenderContext context, ref LightData lightData, bool stereoEnabled, ref CullResults cullResults, Camera camera, bool IsOffscreenCamera)
+        private void ForwardPass(List<VisibleLight> visibleLights, FrameRenderingConfiguration frameRenderingConfiguration, ref ScriptableRenderContext context, ref LightData lightData, bool stereoEnabled, CullResults cullResults, Camera camera, bool IsOffscreenCamera)
         {
             SetupShaderConstants(visibleLights, ref context, ref lightData, ref cullResults);
 
