@@ -9,6 +9,26 @@ using UnityEngine.XR;
 
 namespace CustomRP
 {
+    public struct CameraContext
+    {
+        public Camera Camera;
+        public bool SceneViewCamera;
+        public bool StereoEnabled;
+        public bool IsOffscreenCamera;
+
+        public static CameraContext Create(Camera camera)
+        {
+            bool sceneViewCamera = camera.cameraType == CameraType.SceneView;
+            return new CameraContext
+            {
+                Camera = camera,
+                SceneViewCamera = sceneViewCamera,
+                StereoEnabled = XRSettings.isDeviceActive && !sceneViewCamera && (camera.stereoTargetEye == StereoTargetEyeMask.Both),
+                IsOffscreenCamera = camera.targetTexture != null && camera.cameraType != CameraType.SceneView
+            };
+        }
+    }
+
     public class CustomRenderPipeline : RenderPipeline
     {
         private readonly CustomRenderPipelineAsset m_Asset;
@@ -123,11 +143,7 @@ namespace CustomRP
             {
                 RenderPipeline.BeginCameraRendering(camera);
 
-                bool sceneViewCamera = camera.cameraType == CameraType.SceneView;
-                bool stereoEnabled = XRSettings.isDeviceActive && !sceneViewCamera && (camera.stereoTargetEye == StereoTargetEyeMask.Both);
-                bool IsOffscreenCamera = camera.targetTexture != null && camera.cameraType != CameraType.SceneView;
-
-                Render(ref context, camera, sceneViewCamera, stereoEnabled, IsOffscreenCamera);
+                Render(ref context, CameraContext.Create(camera));
 
                 context.Submit();
 
@@ -135,12 +151,12 @@ namespace CustomRP
             }
         }
 
-        void Render(ref ScriptableRenderContext context, Camera camera, bool sceneViewCamera, bool stereoEnabled, bool IsOffscreenCamera)
+        void Render(ref ScriptableRenderContext context, CameraContext cameraContext)
         {
             ///
             /// culling
             ///
-            if (!m_CullingUtil.Cull(camera, ref context, sceneViewCamera, stereoEnabled, m_ShadowManager.MaxShadowDistance))
+            if (!m_CullingUtil.Cull(ref context, cameraContext, m_ShadowManager.MaxShadowDistance))
             {
                 return;
             }
@@ -150,17 +166,17 @@ namespace CustomRP
             /// setup lights & shadows
             ///
             LightData lightData;
-            m_LightManager.InitializeLightData(visibleLights, out lightData, camera);
+            m_LightManager.InitializeLightData(visibleLights, out lightData, cameraContext.Camera);
 
             bool shadows = m_ShadowManager.ShadowPass(visibleLights, ref context, ref lightData,
-                m_CullingUtil.CullResults, m_LightManager.GetLightUnsortedIndex(lightData.mainLightIndex), camera.backgroundColor);
+                m_CullingUtil.CullResults, m_LightManager.GetLightUnsortedIndex(lightData.mainLightIndex), cameraContext.Camera.backgroundColor);
 
             ///
             /// setup
             ///
             FrameRenderingConfiguration frameRenderingConfiguration;
-            m_TextureUtil.SetupFrameRenderingConfiguration(out frameRenderingConfiguration, shadows, stereoEnabled, sceneViewCamera, camera, m_ShadowManager);
-            m_TextureUtil.SetupIntermediateResources(frameRenderingConfiguration, ref context, camera, IsOffscreenCamera, m_ColorRT);
+            m_TextureUtil.SetupFrameRenderingConfiguration(out frameRenderingConfiguration, cameraContext, shadows, m_ShadowManager);
+            m_TextureUtil.SetupIntermediateResources(frameRenderingConfiguration, ref context, cameraContext, m_ColorRT);
 
             // SetupCameraProperties does the following:
             // Setup Camera RenderTarget and Viewport
@@ -170,13 +186,13 @@ namespace CustomRP
             // Setup camera world clip planes props
             // setup HDR keyword
             // Setup global time properties (_Time, _SinTime, _CosTime)
-            context.SetupCameraProperties(camera, stereoEnabled);
+            context.SetupCameraProperties(cameraContext.Camera, cameraContext.StereoEnabled);
 
             if (LightweightUtils.HasFlag(frameRenderingConfiguration, FrameRenderingConfiguration.DepthPrePass))
-                DepthPass(ref context, frameRenderingConfiguration, m_CullingUtil.CullResults.visibleRenderers, camera);
+                DepthPass(ref context, frameRenderingConfiguration, m_CullingUtil.CullResults.visibleRenderers, cameraContext.Camera);
 
             if (shadows)
-                m_ShadowManager.ShadowCollectPass(visibleLights, ref context, ref lightData, frameRenderingConfiguration, camera);
+                m_ShadowManager.ShadowCollectPass(visibleLights, ref context, ref lightData, frameRenderingConfiguration, cameraContext.Camera);
             else
                 m_ShadowManager.SmallShadowBuffer(ref context);
 
@@ -190,12 +206,12 @@ namespace CustomRP
             /// * AfterTransparent
             /// * PostEffect
             ///
-            ForwardPass(visibleLights, frameRenderingConfiguration, ref context, ref lightData, stereoEnabled, m_CullingUtil.CullResults, camera, IsOffscreenCamera);
+            ForwardPass(visibleLights, frameRenderingConfiguration, ref context, ref lightData, cameraContext, m_CullingUtil.CullResults);
 
             var cmd = CommandBufferPool.Get("");
             cmd.name = "After Camera Render";
 #if UNITY_EDITOR
-            if (sceneViewCamera)
+            if (cameraContext.SceneViewCamera)
                 m_TextureUtil.CopyTexture(cmd, CameraRenderTargetID.depth, BuiltinRenderTextureType.CameraTarget, true);
 #endif
             cmd.ReleaseTemporaryRT(m_ShadowManager.ScreenSpaceShadowMapRTID);
@@ -229,22 +245,23 @@ namespace CustomRP
             StereoRendering.Stop(ref context, frameRenderingConfiguration, camera);
         }
 
-        private void ForwardPass(List<VisibleLight> visibleLights, FrameRenderingConfiguration frameRenderingConfiguration, ref ScriptableRenderContext context, ref LightData lightData, bool stereoEnabled, CullResults cullResults, Camera camera, bool IsOffscreenCamera)
+        private void ForwardPass(List<VisibleLight> visibleLights, FrameRenderingConfiguration frameRenderingConfiguration, ref ScriptableRenderContext context, ref LightData lightData, CameraContext cameraContext, CullResults cullResults)
         {
             SetupShaderConstants(visibleLights, ref context, ref lightData, ref cullResults);
 
             RendererConfiguration rendererSettings = GetRendererSettings(ref lightData);
 
-            BeginForwardRendering(ref context, frameRenderingConfiguration, camera, IsOffscreenCamera);
-            RenderOpaques(ref context, rendererSettings, cullResults.visibleRenderers, camera);
-            AfterOpaque(ref context, frameRenderingConfiguration, camera);
-            RenderTransparents(ref context, rendererSettings, cullResults.visibleRenderers, camera);
-            AfterTransparent(ref context, frameRenderingConfiguration, camera);
-            EndForwardRendering(ref context, frameRenderingConfiguration, camera, IsOffscreenCamera);
+            BeginForwardRendering(ref context, frameRenderingConfiguration, cameraContext);
+            RenderOpaques(ref context, rendererSettings, cullResults.visibleRenderers, cameraContext);
+            AfterOpaque(ref context, frameRenderingConfiguration, cameraContext);
+            RenderTransparents(ref context, rendererSettings, cullResults.visibleRenderers, cameraContext);
+            AfterTransparent(ref context, frameRenderingConfiguration, cameraContext);
+            EndForwardRendering(ref context, frameRenderingConfiguration, cameraContext);
         }
 
-        private void RenderOpaques(ref ScriptableRenderContext context, RendererConfiguration settings, FilterResults visibleRenderers, Camera camera)
+        private void RenderOpaques(ref ScriptableRenderContext context, RendererConfiguration settings, FilterResults visibleRenderers, CameraContext cameraContext)
         {
+            var camera = cameraContext.Camera;
             var opaqueDrawSettings = new DrawRendererSettings(camera, m_LitPassName);
             opaqueDrawSettings.SetShaderPassName(1, m_UnlitPassName);
             opaqueDrawSettings.sorting.flags = SortFlags.CommonOpaque;
@@ -258,13 +275,13 @@ namespace CustomRP
             context.DrawRenderers(visibleRenderers, ref opaqueDrawSettings, opaqueFilterSettings);
 
             // Render objects that did not match any shader pass with error shader
-            RenderObjectsWithError(ref context, opaqueFilterSettings, SortFlags.None, visibleRenderers, camera);
+            RenderObjectsWithError(ref context, opaqueFilterSettings, SortFlags.None, visibleRenderers, cameraContext);
 
             if (camera.clearFlags == CameraClearFlags.Skybox)
                 context.DrawSkybox(camera);
         }
 
-        private void AfterOpaque(ref ScriptableRenderContext context, FrameRenderingConfiguration config, Camera camera)
+        private void AfterOpaque(ref ScriptableRenderContext context, FrameRenderingConfiguration config, CameraContext cameraContext)
         {
             if (!m_TextureUtil.RequireDepthTexture)
                 return;
@@ -274,6 +291,8 @@ namespace CustomRP
 
             bool setRenderTarget = false;
             RenderTargetIdentifier depthRT = m_DepthRT;
+
+            var camera = cameraContext.Camera;
 
             // TODO: There's currently an issue in the PostFX stack that has a one frame delay when an effect is enabled/disabled
             // when an effect is disabled, HasOpaqueOnlyEffects returns true in the first frame, however inside render the effect
@@ -307,9 +326,9 @@ namespace CustomRP
             CommandBufferPool.Release(cmd);
         }
 
-        private void RenderTransparents(ref ScriptableRenderContext context, RendererConfiguration config, FilterResults visibleRenderers, Camera camera)
+        private void RenderTransparents(ref ScriptableRenderContext context, RendererConfiguration config, FilterResults visibleRenderers, CameraContext cameraContext)
         {
-            var transparentSettings = new DrawRendererSettings(camera, m_LitPassName);
+            var transparentSettings = new DrawRendererSettings(cameraContext.Camera, m_LitPassName);
             transparentSettings.SetShaderPassName(1, m_UnlitPassName);
             transparentSettings.sorting.flags = SortFlags.CommonTransparent;
             transparentSettings.rendererConfiguration = config;
@@ -322,26 +341,26 @@ namespace CustomRP
             context.DrawRenderers(visibleRenderers, ref transparentSettings, transparentFilterSettings);
 
             // Render objects that did not match any shader pass with error shader
-            RenderObjectsWithError(ref context, transparentFilterSettings, SortFlags.None, visibleRenderers, camera);
+            RenderObjectsWithError(ref context, transparentFilterSettings, SortFlags.None, visibleRenderers, cameraContext);
         }
 
-        private void AfterTransparent(ref ScriptableRenderContext context, FrameRenderingConfiguration config, Camera camera)
+        private void AfterTransparent(ref ScriptableRenderContext context, FrameRenderingConfiguration config, CameraContext cameraContext)
         {
             if (!LightweightUtils.HasFlag(config, FrameRenderingConfiguration.PostProcess))
                 return;
 
             CommandBuffer cmd = CommandBufferPool.Get("After Transparent");
-            m_TextureUtil.RenderPostProcess(cmd, m_TextureUtil.CurrCameraColorRT, BuiltinRenderTextureType.CameraTarget, false, camera);
+            m_TextureUtil.RenderPostProcess(cmd, m_TextureUtil.CurrCameraColorRT, BuiltinRenderTextureType.CameraTarget, false, cameraContext.Camera);
             context.ExecuteCommandBuffer(cmd);
             CommandBufferPool.Release(cmd);
         }
 
         [System.Diagnostics.Conditional("DEVELOPMENT_BUILD"), System.Diagnostics.Conditional("UNITY_EDITOR")]
-        private void RenderObjectsWithError(ref ScriptableRenderContext context, FilterRenderersSettings filterSettings, SortFlags sortFlags, FilterResults visibleRenderers, Camera camera)
+        private void RenderObjectsWithError(ref ScriptableRenderContext context, FilterRenderersSettings filterSettings, SortFlags sortFlags, FilterResults visibleRenderers, CameraContext cameraContext)
         {
             if (m_ErrorMaterial != null)
             {
-                DrawRendererSettings errorSettings = new DrawRendererSettings(camera, s_LegacyPassNames[0]);
+                DrawRendererSettings errorSettings = new DrawRendererSettings(cameraContext.Camera, s_LegacyPassNames[0]);
                 for (int i = 1; i < s_LegacyPassNames.Length; ++i)
                     errorSettings.SetShaderPassName(i, s_LegacyPassNames[i]);
 
@@ -408,18 +427,18 @@ namespace CustomRP
             CoreUtils.SetKeyword(cmd, "FOG_EXP2", exponentialFogModeEnabled);
         }
 
-        private void BeginForwardRendering(ref ScriptableRenderContext context, FrameRenderingConfiguration renderingConfig, Camera camera, bool IsOffscreenCamera)
+        private void BeginForwardRendering(ref ScriptableRenderContext context, FrameRenderingConfiguration renderingConfig, CameraContext cameraContext)
         {
             RenderTargetIdentifier colorRT = BuiltinRenderTextureType.CameraTarget;
             RenderTargetIdentifier depthRT = BuiltinRenderTextureType.None;
 
-            StereoRendering.Start(ref context, renderingConfig, camera);
+            StereoRendering.Start(ref context, renderingConfig, cameraContext.Camera);
 
             CommandBuffer cmd = CommandBufferPool.Get("SetCameraRenderTarget");
             bool intermediateTexture = LightweightUtils.HasFlag(renderingConfig, FrameRenderingConfiguration.IntermediateTexture);
             if (intermediateTexture)
             {
-                if (!IsOffscreenCamera)
+                if (!cameraContext.IsOffscreenCamera)
                     colorRT = m_TextureUtil.CurrCameraColorRT;
 
                 if (m_TextureUtil.RequireDepthTexture)
@@ -427,7 +446,7 @@ namespace CustomRP
             }
 
             ClearFlag clearFlag = ClearFlag.None;
-            CameraClearFlags cameraClearFlags = camera.clearFlags;
+            CameraClearFlags cameraClearFlags = cameraContext.Camera.clearFlags;
             if (cameraClearFlags != CameraClearFlags.Nothing)
             {
                 clearFlag |= ClearFlag.Depth;
@@ -435,23 +454,24 @@ namespace CustomRP
                     clearFlag |= ClearFlag.Color;
             }
 
-            m_TextureUtil.SetRenderTarget(cmd, colorRT, depthRT, camera.backgroundColor, clearFlag);
+            m_TextureUtil.SetRenderTarget(cmd, colorRT, depthRT, cameraContext.Camera.backgroundColor, clearFlag);
 
             // If rendering to an intermediate RT we resolve viewport on blit due to offset not being supported
             // while rendering to a RT.
             if (!intermediateTexture && !LightweightUtils.HasFlag(renderingConfig, FrameRenderingConfiguration.DefaultViewport))
-                cmd.SetViewport(camera.pixelRect);
+                cmd.SetViewport(cameraContext.Camera.pixelRect);
 
             context.ExecuteCommandBuffer(cmd);
             CommandBufferPool.Release(cmd);
         }
 
-        private void EndForwardRendering(ref ScriptableRenderContext context, FrameRenderingConfiguration renderingConfig, Camera camera, bool IsOffscreenCamera)
+        private void EndForwardRendering(ref ScriptableRenderContext context, FrameRenderingConfiguration renderingConfig, CameraContext cameraContext)
         {
             // No additional rendering needs to be done if this is an off screen rendering camera
-            if (IsOffscreenCamera)
+            if (cameraContext.IsOffscreenCamera)
                 return;
 
+            var camera = cameraContext.Camera;
             m_TextureUtil.Blit(context, m_TextureUtil.CurrCameraColorRT, renderingConfig, camera);
 
             if (LightweightUtils.HasFlag(renderingConfig, FrameRenderingConfiguration.Stereo))

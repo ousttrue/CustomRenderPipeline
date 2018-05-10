@@ -63,14 +63,15 @@ namespace CustomRP
             CoreUtils.Destroy(m_BlitMaterial);
         }
 
-        public void SetupFrameRenderingConfiguration(out FrameRenderingConfiguration configuration, bool shadows, bool stereoEnabled, bool sceneViewCamera, Camera camera, ShadowManager shadowManager)
+        public void SetupFrameRenderingConfiguration(out FrameRenderingConfiguration configuration, CameraContext cameraContext, bool shadows, ShadowManager shadowManager)
         {
-            configuration = (stereoEnabled) ? FrameRenderingConfiguration.Stereo : FrameRenderingConfiguration.None;
-            if (stereoEnabled && XRSettings.eyeTextureDesc.dimension == TextureDimension.Tex2DArray)
+            configuration = (cameraContext.StereoEnabled) ? FrameRenderingConfiguration.Stereo : FrameRenderingConfiguration.None;
+            if (cameraContext.StereoEnabled && XRSettings.eyeTextureDesc.dimension == TextureDimension.Tex2DArray)
                 m_IntermediateTextureArray = true;
             else
                 m_IntermediateTextureArray = false;
 
+            var camera = cameraContext.Camera;
             bool hdrEnabled = m_Asset.SupportsHDR && camera.allowHDR;
             bool intermediateTexture = camera.targetTexture != null || camera.cameraType == CameraType.SceneView ||
                 m_Asset.RenderScale < 1.0f || hdrEnabled;
@@ -83,8 +84,8 @@ namespace CustomRP
             bool msaaEnabled = camera.allowMSAA && m_Asset.MSAASampleCount > 1 && (camera.targetTexture == null || camera.targetTexture.antiAliasing > 1);
 
             // TODO: PostProcessing and SoftParticles are currently not support for VR
-            bool postProcessEnabled = m_CameraPostProcessLayer != null && m_CameraPostProcessLayer.enabled && !stereoEnabled;
-            m_RequireDepthTexture = m_Asset.RequireDepthTexture && !stereoEnabled;
+            bool postProcessEnabled = m_CameraPostProcessLayer != null && m_CameraPostProcessLayer.enabled && !cameraContext.StereoEnabled;
+            m_RequireDepthTexture = m_Asset.RequireDepthTexture && !cameraContext.StereoEnabled;
             if (postProcessEnabled)
             {
                 m_RequireDepthTexture = true;
@@ -99,7 +100,7 @@ namespace CustomRP
                 }
             }
 
-            if (sceneViewCamera)
+            if (cameraContext.SceneViewCamera)
                 m_RequireDepthTexture = true;
 
             if (shadows)
@@ -218,23 +219,24 @@ namespace CustomRP
             CoreUtils.SetRenderTarget(cmd, colorRT, depthRT, clearFlag, CoreUtils.ConvertSRGBToActiveColorSpace(backgroundColor), 0, CubemapFace.Unknown, depthSlice);
         }
 
-        public void SetupIntermediateResources(FrameRenderingConfiguration renderingConfig, ref ScriptableRenderContext context, Camera camera, bool IsOffscreenCamera, RenderTargetIdentifier colorRT)
+        public void SetupIntermediateResources(FrameRenderingConfiguration renderingConfig, ref ScriptableRenderContext context, CameraContext cameraContext, RenderTargetIdentifier colorRT)
         {
             CommandBuffer cmd = CommandBufferPool.Get("Setup Intermediate Resources");
 
-            int msaaSamples = (IsOffscreenCamera) ? Math.Min(camera.targetTexture.antiAliasing, m_Asset.MSAASampleCount) : m_Asset.MSAASampleCount;
+            int msaaSamples = (cameraContext.IsOffscreenCamera) ? Math.Min(cameraContext.Camera.targetTexture.antiAliasing, m_Asset.MSAASampleCount) : m_Asset.MSAASampleCount;
             msaaSamples = (LightweightUtils.HasFlag(renderingConfig, FrameRenderingConfiguration.Msaa)) ? msaaSamples : 1;
             m_CurrCameraColorRT = BuiltinRenderTextureType.CameraTarget;
 
             if (LightweightUtils.HasFlag(renderingConfig, FrameRenderingConfiguration.IntermediateTexture) || m_RequireDepthTexture)
-                SetupIntermediateRenderTextures(cmd, renderingConfig, msaaSamples, camera, IsOffscreenCamera, colorRT);
+                SetupIntermediateRenderTextures(cmd, renderingConfig, msaaSamples, cameraContext, colorRT);
 
             context.ExecuteCommandBuffer(cmd);
             CommandBufferPool.Release(cmd);
         }
 
-        private void SetupIntermediateRenderTextures(CommandBuffer cmd, FrameRenderingConfiguration renderingConfig, int msaaSamples, Camera camera, bool IsOffscreenCamera, RenderTargetIdentifier ColorRT)
+        private void SetupIntermediateRenderTextures(CommandBuffer cmd, FrameRenderingConfiguration renderingConfig, int msaaSamples, CameraContext cameraContext, RenderTargetIdentifier ColorRT)
         {
+            var camera = cameraContext.Camera;
             RenderTextureDescriptor baseDesc;
             if (LightweightUtils.HasFlag(renderingConfig, FrameRenderingConfiguration.Stereo))
                 baseDesc = XRSettings.eyeTextureDesc;
@@ -267,7 +269,7 @@ namespace CustomRP
             colorRTDesc.enableRandomWrite = false;
 
             // When offscreen camera current rendertarget is CameraTarget
-            if (!IsOffscreenCamera)
+            if (!cameraContext.IsOffscreenCamera)
             {
                 cmd.GetTemporaryRT(CameraRenderTargetID.color, colorRTDesc, FilterMode.Bilinear);
                 m_CurrCameraColorRT = ColorRT;

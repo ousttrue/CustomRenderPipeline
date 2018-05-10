@@ -14,19 +14,19 @@ namespace CustomRP
             get { return m_CullResults; }
         }
 
-        public bool Cull(Camera camera, ref ScriptableRenderContext context
-            , bool sceneViewCamera, bool stereoEnabled
+        public bool Cull(ref ScriptableRenderContext context
+            , CameraContext cameraContext
             , float maxShadowDistance)
         {
-            if (!CullResults.GetCullingParameters(camera, stereoEnabled, out cullingParameters))
+            if (!CullResults.GetCullingParameters(cameraContext.Camera, cameraContext.StereoEnabled, out cullingParameters))
                 return false;
 
-            cullingParameters.shadowDistance = Mathf.Min(maxShadowDistance, camera.farClipPlane);
+            cullingParameters.shadowDistance = Mathf.Min(maxShadowDistance, cameraContext.Camera.farClipPlane);
 
 #if UNITY_EDITOR
             // Emit scene view UI
-            if (sceneViewCamera)
-                ScriptableRenderContext.EmitWorldGeometryForSceneView(camera);
+            if (cameraContext.SceneViewCamera)
+                ScriptableRenderContext.EmitWorldGeometryForSceneView(cameraContext.Camera);
 #endif
 
             CullResults.Cull(ref cullingParameters, context, ref m_CullResults);
