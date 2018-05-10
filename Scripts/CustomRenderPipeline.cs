@@ -82,7 +82,7 @@ namespace CustomRP
             if (QualitySettings.antiAliasing != m_Asset.MSAASampleCount)
                 QualitySettings.antiAliasing = m_Asset.MSAASampleCount;
 
-            Shader.globalRenderPipeline = "LightweightPipeline";
+            Shader.globalRenderPipeline = "CustomRenderPipeline";
 
             m_ErrorMaterial = CoreUtils.CreateEngineMaterial("Hidden/InternalErrorShader");
 
@@ -121,77 +121,97 @@ namespace CustomRP
             {
                 RenderPipeline.BeginCameraRendering(camera);
 
-                bool sceneViewCamera = camera.cameraType == CameraType.SceneView;
-                bool stereoEnabled = XRSettings.isDeviceActive && !sceneViewCamera && (camera.stereoTargetEye == StereoTargetEyeMask.Both);
-                bool IsOffscreenCamera = camera.targetTexture != null && camera.cameraType != CameraType.SceneView;
-
-
-                ScriptableCullingParameters cullingParameters;
-                if (!CullResults.GetCullingParameters(camera, stereoEnabled, out cullingParameters))
-                    continue;
-
-                var cmd = CommandBufferPool.Get("");
-                cullingParameters.shadowDistance = Mathf.Min(m_ShadowManager.MaxShadowDistance,
-                        camera.farClipPlane);
-
-#if UNITY_EDITOR
-                // Emit scene view UI
-                if (sceneViewCamera)
-                    ScriptableRenderContext.EmitWorldGeometryForSceneView(camera);
-#endif
-
-                CullResults.Cull(ref cullingParameters, context, ref m_CullResults);
-                List<VisibleLight> visibleLights = m_CullResults.visibleLights;
-
-                LightData lightData;
-                m_LightManager.InitializeLightData(visibleLights, out lightData, camera);
-
-                bool shadows = m_ShadowManager.ShadowPass(visibleLights, ref context, ref lightData,
-                    m_CullResults, m_LightManager.GetLightUnsortedIndex(lightData.mainLightIndex), camera.backgroundColor);
-
-                FrameRenderingConfiguration frameRenderingConfiguration;
-                m_TextureUtil.SetupFrameRenderingConfiguration(out frameRenderingConfiguration, shadows, stereoEnabled, sceneViewCamera, camera, m_ShadowManager);
-                m_TextureUtil.SetupIntermediateResources(frameRenderingConfiguration, ref context, camera, IsOffscreenCamera, m_ColorRT);
-
-                // SetupCameraProperties does the following:
-                // Setup Camera RenderTarget and Viewport
-                // VR Camera Setup and SINGLE_PASS_STEREO props
-                // Setup camera view, proj and their inv matrices.
-                // Setup properties: _WorldSpaceCameraPos, _ProjectionParams, _ScreenParams, _ZBufferParams, unity_OrthoParams
-                // Setup camera world clip planes props
-                // setup HDR keyword
-                // Setup global time properties (_Time, _SinTime, _CosTime)
-                context.SetupCameraProperties(camera, stereoEnabled);
-
-                if (LightweightUtils.HasFlag(frameRenderingConfiguration, FrameRenderingConfiguration.DepthPrePass))
-                    DepthPass(ref context, frameRenderingConfiguration, m_CullResults.visibleRenderers, camera);
-
-                if (shadows)
-                    m_ShadowManager.ShadowCollectPass(visibleLights, ref context, ref lightData, frameRenderingConfiguration, camera);
-                else
-                    m_ShadowManager.SmallShadowBuffer(ref context);
-
-
-                ForwardPass(visibleLights, frameRenderingConfiguration, ref context, ref lightData, stereoEnabled, ref m_CullResults, camera, IsOffscreenCamera);
-
-
-                cmd.name = "After Camera Render";
-#if UNITY_EDITOR
-                if (sceneViewCamera)
-                    m_TextureUtil.CopyTexture(cmd, CameraRenderTargetID.depth, BuiltinRenderTextureType.CameraTarget, true);
-#endif
-                cmd.ReleaseTemporaryRT(m_ShadowManager.ScreenSpaceShadowMapRTID);
-                cmd.ReleaseTemporaryRT(CameraRenderTargetID.depthCopy);
-                cmd.ReleaseTemporaryRT(CameraRenderTargetID.depth);
-                cmd.ReleaseTemporaryRT(CameraRenderTargetID.color);
-                cmd.ReleaseTemporaryRT(CameraRenderTargetID.copyColor);
-                context.ExecuteCommandBuffer(cmd);
-                CommandBufferPool.Release(cmd);
+                Render(context, camera);
 
                 context.Submit();
 
                 m_ShadowManager.ReleaseRenderTarget();
             }
+        }
+
+        void Render(ScriptableRenderContext context, Camera camera)
+        {
+            ///
+            /// culling
+            ///
+            bool sceneViewCamera = camera.cameraType == CameraType.SceneView;
+            bool stereoEnabled = XRSettings.isDeviceActive && !sceneViewCamera && (camera.stereoTargetEye == StereoTargetEyeMask.Both);
+            bool IsOffscreenCamera = camera.targetTexture != null && camera.cameraType != CameraType.SceneView;
+
+            ScriptableCullingParameters cullingParameters;
+            if (!CullResults.GetCullingParameters(camera, stereoEnabled, out cullingParameters))
+                return;
+
+            var cmd = CommandBufferPool.Get("");
+            cullingParameters.shadowDistance = Mathf.Min(m_ShadowManager.MaxShadowDistance, camera.farClipPlane);
+
+#if UNITY_EDITOR
+            // Emit scene view UI
+            if (sceneViewCamera)
+                ScriptableRenderContext.EmitWorldGeometryForSceneView(camera);
+#endif
+
+            CullResults.Cull(ref cullingParameters, context, ref m_CullResults);
+
+            ///
+            /// setup lights & shadows
+            ///
+            List<VisibleLight> visibleLights = m_CullResults.visibleLights;
+            LightData lightData;
+            m_LightManager.InitializeLightData(visibleLights, out lightData, camera);
+
+            bool shadows = m_ShadowManager.ShadowPass(visibleLights, ref context, ref lightData,
+                m_CullResults, m_LightManager.GetLightUnsortedIndex(lightData.mainLightIndex), camera.backgroundColor);
+
+            ///
+            /// setup
+            ///
+            FrameRenderingConfiguration frameRenderingConfiguration;
+            m_TextureUtil.SetupFrameRenderingConfiguration(out frameRenderingConfiguration, shadows, stereoEnabled, sceneViewCamera, camera, m_ShadowManager);
+            m_TextureUtil.SetupIntermediateResources(frameRenderingConfiguration, ref context, camera, IsOffscreenCamera, m_ColorRT);
+
+            // SetupCameraProperties does the following:
+            // Setup Camera RenderTarget and Viewport
+            // VR Camera Setup and SINGLE_PASS_STEREO props
+            // Setup camera view, proj and their inv matrices.
+            // Setup properties: _WorldSpaceCameraPos, _ProjectionParams, _ScreenParams, _ZBufferParams, unity_OrthoParams
+            // Setup camera world clip planes props
+            // setup HDR keyword
+            // Setup global time properties (_Time, _SinTime, _CosTime)
+            context.SetupCameraProperties(camera, stereoEnabled);
+
+            if (LightweightUtils.HasFlag(frameRenderingConfiguration, FrameRenderingConfiguration.DepthPrePass))
+                DepthPass(ref context, frameRenderingConfiguration, m_CullResults.visibleRenderers, camera);
+
+            if (shadows)
+                m_ShadowManager.ShadowCollectPass(visibleLights, ref context, ref lightData, frameRenderingConfiguration, camera);
+            else
+                m_ShadowManager.SmallShadowBuffer(ref context);
+
+            ///
+            /// forward pass
+            ///
+            /// * Clear
+            /// * Opaque
+            /// * AfterOpaque
+            /// * Transparent
+            /// * AfterTransparent
+            /// * PostEffect
+            ///
+            ForwardPass(visibleLights, frameRenderingConfiguration, ref context, ref lightData, stereoEnabled, ref m_CullResults, camera, IsOffscreenCamera);
+
+            cmd.name = "After Camera Render";
+#if UNITY_EDITOR
+            if (sceneViewCamera)
+                m_TextureUtil.CopyTexture(cmd, CameraRenderTargetID.depth, BuiltinRenderTextureType.CameraTarget, true);
+#endif
+            cmd.ReleaseTemporaryRT(m_ShadowManager.ScreenSpaceShadowMapRTID);
+            cmd.ReleaseTemporaryRT(CameraRenderTargetID.depthCopy);
+            cmd.ReleaseTemporaryRT(CameraRenderTargetID.depth);
+            cmd.ReleaseTemporaryRT(CameraRenderTargetID.color);
+            cmd.ReleaseTemporaryRT(CameraRenderTargetID.copyColor);
+            context.ExecuteCommandBuffer(cmd);
+            CommandBufferPool.Release(cmd);
         }
 
         private void DepthPass(ref ScriptableRenderContext context, FrameRenderingConfiguration frameRenderingConfiguration, FilterResults visibleRenderers, Camera camera)
