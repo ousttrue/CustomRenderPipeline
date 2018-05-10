@@ -1,58 +1,14 @@
-﻿using UnityEngine;
-using UnityEngine.Experimental.Rendering;
-using System.Collections;
-using UnityEngine.Rendering;
-using UnityEngine.Experimental.Rendering.LightweightPipeline;
-using System;
-using UnityEngine.XR;
+﻿using System;
 using System.Collections.Generic;
-#if UNITY_EDITOR
-using UnityEditor;
-#endif
+using UnityEngine;
+using UnityEngine.Experimental.Rendering;
+using UnityEngine.Experimental.Rendering.LightweightPipeline;
+using UnityEngine.Rendering;
+using UnityEngine.XR;
 
 
 namespace CustomRP
 {
-    internal static class SceneViewDrawMode
-    {
-        static bool RejectDrawMode(SceneView.CameraMode cameraMode)
-        {
-            if (cameraMode.drawMode == DrawCameraMode.TexturedWire ||
-                cameraMode.drawMode == DrawCameraMode.ShadowCascades ||
-                cameraMode.drawMode == DrawCameraMode.RenderPaths ||
-                cameraMode.drawMode == DrawCameraMode.AlphaChannel ||
-                cameraMode.drawMode == DrawCameraMode.Overdraw ||
-                cameraMode.drawMode == DrawCameraMode.Mipmaps ||
-                cameraMode.drawMode == DrawCameraMode.SpriteMask ||
-                cameraMode.drawMode == DrawCameraMode.DeferredDiffuse ||
-                cameraMode.drawMode == DrawCameraMode.DeferredSpecular ||
-                cameraMode.drawMode == DrawCameraMode.DeferredSmoothness ||
-                cameraMode.drawMode == DrawCameraMode.DeferredNormal ||
-                cameraMode.drawMode == DrawCameraMode.ValidateAlbedo ||
-                cameraMode.drawMode == DrawCameraMode.ValidateMetalSpecular ||
-                cameraMode.drawMode == DrawCameraMode.ShadowMasks ||
-                cameraMode.drawMode == DrawCameraMode.LightOverlap
-            )
-                return false;
-
-            return true;
-        }
-
-        public static void SetupDrawMode()
-        {
-            ArrayList sceneViewArray = SceneView.sceneViews;
-            foreach (SceneView sceneView in sceneViewArray)
-                sceneView.onValidateCameraMode += RejectDrawMode;
-        }
-
-        public static void ResetDrawMode()
-        {
-            ArrayList sceneViewArray = SceneView.sceneViews;
-            foreach (SceneView sceneView in sceneViewArray)
-                sceneView.onValidateCameraMode -= RejectDrawMode;
-        }
-    }
-
     public class CustomRenderPipeline : RenderPipeline
     {
         private readonly CustomRenderPipelineAsset m_Asset;
@@ -92,7 +48,7 @@ namespace CustomRP
         {
             m_Asset = asset;
 
-            SetRenderingFeatures();
+            SceneViewUtil.SetRenderingFeatures();
 
             PerFrameBuffer._GlossyEnvironmentColor = Shader.PropertyToID("_GlossyEnvironmentColor");
             PerFrameBuffer._SubtractiveShadowColor = Shader.PropertyToID("_SubtractiveShadowColor");
@@ -147,25 +103,6 @@ namespace CustomRP
 
 #if UNITY_EDITOR
             SceneViewDrawMode.ResetDrawMode();
-#endif
-        }
-
-        private void SetRenderingFeatures()
-        {
-#if UNITY_EDITOR
-            SupportedRenderingFeatures.active = new SupportedRenderingFeatures()
-            {
-                reflectionProbeSupportFlags = SupportedRenderingFeatures.ReflectionProbeSupportFlags.None,
-                defaultMixedLightingMode = SupportedRenderingFeatures.LightmapMixedBakeMode.Subtractive,
-                supportedMixedLightingModes = SupportedRenderingFeatures.LightmapMixedBakeMode.Subtractive,
-                supportedLightmapBakeTypes = LightmapBakeType.Baked | LightmapBakeType.Mixed,
-                supportedLightmapsModes = LightmapsMode.CombinedDirectional | LightmapsMode.NonDirectional,
-                rendererSupportsLightProbeProxyVolumes = false,
-                rendererSupportsMotionVectors = false,
-                rendererSupportsReceiveShadows = true,
-                rendererSupportsReflectionProbes = true
-            };
-            SceneViewDrawMode.SetupDrawMode();
 #endif
         }
 
