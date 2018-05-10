@@ -57,8 +57,6 @@ namespace CustomRP
     {
         private readonly CustomRenderPipelineAsset m_Asset;
 
-        private bool m_IsOffscreenCamera;
-
         private RenderTargetIdentifier m_ColorRT;
         private RenderTargetIdentifier m_CopyColorRT;
         private RenderTargetIdentifier m_DepthRT;
@@ -188,7 +186,7 @@ namespace CustomRP
 
                 bool sceneViewCamera = camera.cameraType == CameraType.SceneView;
                 bool stereoEnabled = XRSettings.isDeviceActive && !sceneViewCamera && (camera.stereoTargetEye == StereoTargetEyeMask.Both);
-                m_IsOffscreenCamera = camera.targetTexture != null && camera.cameraType != CameraType.SceneView;
+                bool IsOffscreenCamera = camera.targetTexture != null && camera.cameraType != CameraType.SceneView;
 
 
                 ScriptableCullingParameters cullingParameters;
@@ -216,7 +214,7 @@ namespace CustomRP
 
                 FrameRenderingConfiguration frameRenderingConfiguration;
                 m_TextureUtil.SetupFrameRenderingConfiguration(out frameRenderingConfiguration, shadows, stereoEnabled, sceneViewCamera, camera, m_ShadowManager);
-                m_TextureUtil.SetupIntermediateResources(frameRenderingConfiguration, ref context, camera, m_IsOffscreenCamera, m_ColorRT);
+                m_TextureUtil.SetupIntermediateResources(frameRenderingConfiguration, ref context, camera, IsOffscreenCamera, m_ColorRT);
 
                 // SetupCameraProperties does the following:
                 // Setup Camera RenderTarget and Viewport
@@ -237,7 +235,7 @@ namespace CustomRP
                     m_ShadowManager.SmallShadowBuffer(ref context);
 
 
-                ForwardPass(visibleLights, frameRenderingConfiguration, ref context, ref lightData, stereoEnabled, ref m_CullResults, camera);
+                ForwardPass(visibleLights, frameRenderingConfiguration, ref context, ref lightData, stereoEnabled, ref m_CullResults, camera, IsOffscreenCamera);
 
 
                 cmd.name = "After Camera Render";
@@ -281,18 +279,18 @@ namespace CustomRP
             StereoRendering.Stop(ref context, frameRenderingConfiguration, camera);
         }
 
-        private void ForwardPass(List<VisibleLight> visibleLights, FrameRenderingConfiguration frameRenderingConfiguration, ref ScriptableRenderContext context, ref LightData lightData, bool stereoEnabled, ref CullResults cullResults, Camera camera)
+        private void ForwardPass(List<VisibleLight> visibleLights, FrameRenderingConfiguration frameRenderingConfiguration, ref ScriptableRenderContext context, ref LightData lightData, bool stereoEnabled, ref CullResults cullResults, Camera camera, bool IsOffscreenCamera)
         {
             SetupShaderConstants(visibleLights, ref context, ref lightData, ref cullResults);
 
             RendererConfiguration rendererSettings = GetRendererSettings(ref lightData);
 
-            BeginForwardRendering(ref context, frameRenderingConfiguration, camera);
+            BeginForwardRendering(ref context, frameRenderingConfiguration, camera, IsOffscreenCamera);
             RenderOpaques(ref context, rendererSettings, cullResults.visibleRenderers, camera);
             AfterOpaque(ref context, frameRenderingConfiguration, camera);
             RenderTransparents(ref context, rendererSettings, cullResults.visibleRenderers, camera);
             AfterTransparent(ref context, frameRenderingConfiguration, camera);
-            EndForwardRendering(ref context, frameRenderingConfiguration, camera);
+            EndForwardRendering(ref context, frameRenderingConfiguration, camera, IsOffscreenCamera);
         }
 
         private void RenderOpaques(ref ScriptableRenderContext context, RendererConfiguration settings, FilterResults visibleRenderers, Camera camera)
@@ -460,7 +458,7 @@ namespace CustomRP
             CoreUtils.SetKeyword(cmd, "FOG_EXP2", exponentialFogModeEnabled);
         }
 
-        private void BeginForwardRendering(ref ScriptableRenderContext context, FrameRenderingConfiguration renderingConfig, Camera camera)
+        private void BeginForwardRendering(ref ScriptableRenderContext context, FrameRenderingConfiguration renderingConfig, Camera camera, bool IsOffscreenCamera)
         {
             RenderTargetIdentifier colorRT = BuiltinRenderTextureType.CameraTarget;
             RenderTargetIdentifier depthRT = BuiltinRenderTextureType.None;
@@ -471,7 +469,7 @@ namespace CustomRP
             bool intermediateTexture = LightweightUtils.HasFlag(renderingConfig, FrameRenderingConfiguration.IntermediateTexture);
             if (intermediateTexture)
             {
-                if (!m_IsOffscreenCamera)
+                if (!IsOffscreenCamera)
                     colorRT = m_TextureUtil.CurrCameraColorRT;
 
                 if (m_TextureUtil.RequireDepthTexture)
@@ -498,10 +496,10 @@ namespace CustomRP
             CommandBufferPool.Release(cmd);
         }
 
-        private void EndForwardRendering(ref ScriptableRenderContext context, FrameRenderingConfiguration renderingConfig, Camera camera)
+        private void EndForwardRendering(ref ScriptableRenderContext context, FrameRenderingConfiguration renderingConfig, Camera camera, bool IsOffscreenCamera)
         {
             // No additional rendering needs to be done if this is an off screen rendering camera
-            if (m_IsOffscreenCamera)
+            if (IsOffscreenCamera)
                 return;
 
             m_TextureUtil.Blit(context, m_TextureUtil.CurrCameraColorRT, renderingConfig, camera);
