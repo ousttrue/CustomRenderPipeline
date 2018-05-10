@@ -143,7 +143,25 @@ namespace CustomRP
             {
                 RenderPipeline.BeginCameraRendering(camera);
 
-                Render(ref context, CameraContext.Create(camera));
+                var cameraContext = CameraContext.Create(camera);
+
+                Render(ref context, cameraContext);
+
+                {
+                    var cmd = CommandBufferPool.Get("");
+                    cmd.name = "After Camera Render";
+#if UNITY_EDITOR
+                    if (cameraContext.SceneViewCamera)
+                        m_TextureUtil.CopyTexture(cmd, CameraRenderTargetID.depth, BuiltinRenderTextureType.CameraTarget, true);
+#endif
+                    cmd.ReleaseTemporaryRT(m_ShadowManager.ScreenSpaceShadowMapRTID);
+                    cmd.ReleaseTemporaryRT(CameraRenderTargetID.depthCopy);
+                    cmd.ReleaseTemporaryRT(CameraRenderTargetID.depth);
+                    cmd.ReleaseTemporaryRT(CameraRenderTargetID.color);
+                    cmd.ReleaseTemporaryRT(CameraRenderTargetID.copyColor);
+                    context.ExecuteCommandBuffer(cmd);
+                    CommandBufferPool.Release(cmd);
+                }
 
                 context.Submit();
 
@@ -168,14 +186,13 @@ namespace CustomRP
             LightData lightData;
             m_LightManager.InitializeLightData(visibleLights, out lightData, cameraContext.Camera);
 
-            bool shadows = m_ShadowManager.ShadowPass(visibleLights, ref context, ref lightData,
+            m_ShadowManager.ShadowPass(visibleLights, ref context, ref lightData,
                 m_CullingUtil.CullResults, m_LightManager.GetLightUnsortedIndex(lightData.mainLightIndex), cameraContext.Camera.backgroundColor);
 
             ///
             /// setup
             ///
-            FrameRenderingConfiguration frameRenderingConfiguration;
-            m_TextureUtil.SetupFrameRenderingConfiguration(out frameRenderingConfiguration, cameraContext, shadows, m_ShadowManager);
+            var frameRenderingConfiguration=m_TextureUtil.SetupFrameRenderingConfiguration(cameraContext, m_ShadowManager);
             m_TextureUtil.SetupIntermediateResources(frameRenderingConfiguration, ref context, cameraContext, m_ColorRT);
 
             // SetupCameraProperties does the following:
@@ -191,7 +208,7 @@ namespace CustomRP
             if (LightweightUtils.HasFlag(frameRenderingConfiguration, FrameRenderingConfiguration.DepthPrePass))
                 DepthPass(ref context, frameRenderingConfiguration, m_CullingUtil.CullResults.visibleRenderers, cameraContext.Camera);
 
-            if (shadows)
+            if (m_ShadowManager.Shadows)
                 m_ShadowManager.ShadowCollectPass(visibleLights, ref context, ref lightData, frameRenderingConfiguration, cameraContext.Camera);
             else
                 m_ShadowManager.SmallShadowBuffer(ref context);
@@ -207,20 +224,6 @@ namespace CustomRP
             /// * PostEffect
             ///
             ForwardPass(visibleLights, frameRenderingConfiguration, ref context, ref lightData, cameraContext, m_CullingUtil.CullResults);
-
-            var cmd = CommandBufferPool.Get("");
-            cmd.name = "After Camera Render";
-#if UNITY_EDITOR
-            if (cameraContext.SceneViewCamera)
-                m_TextureUtil.CopyTexture(cmd, CameraRenderTargetID.depth, BuiltinRenderTextureType.CameraTarget, true);
-#endif
-            cmd.ReleaseTemporaryRT(m_ShadowManager.ScreenSpaceShadowMapRTID);
-            cmd.ReleaseTemporaryRT(CameraRenderTargetID.depthCopy);
-            cmd.ReleaseTemporaryRT(CameraRenderTargetID.depth);
-            cmd.ReleaseTemporaryRT(CameraRenderTargetID.color);
-            cmd.ReleaseTemporaryRT(CameraRenderTargetID.copyColor);
-            context.ExecuteCommandBuffer(cmd);
-            CommandBufferPool.Release(cmd);
         }
 
         private void DepthPass(ref ScriptableRenderContext context, FrameRenderingConfiguration frameRenderingConfiguration, FilterResults visibleRenderers, Camera camera)

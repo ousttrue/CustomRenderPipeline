@@ -115,7 +115,12 @@ namespace CustomRP
             }
         }
 
-        public bool ShadowPass(List<VisibleLight> visibleLights, ref ScriptableRenderContext context, ref LightData lightData, CullResults cullResults, int unsortedIndex, Color backgroundColor)
+        public bool Shadows
+        {
+            get;
+            private set;
+        }
+        public void ShadowPass(List<VisibleLight> visibleLights, ref ScriptableRenderContext context, ref LightData lightData, CullResults cullResults, int unsortedIndex, Color backgroundColor)
         {
             m_ShadowMapRT = null;
             if (m_Asset.AreShadowsEnabled() && lightData.mainLightIndex != -1)
@@ -127,7 +132,8 @@ namespace CustomRP
                     if (!LightweightUtils.IsSupportedShadowType(mainLight.lightType))
                     {
                         Debug.LogWarning("Only directional and spot shadows are supported by LightweightPipeline.");
-                        return false;
+                        Shadows = false;
+                        return;
                     }
 
                     // There's no way to map shadow light indices. We need to pass in the original unsorted index.
@@ -148,11 +154,13 @@ namespace CustomRP
                         lightData.shadowMapSampleType = LightShadows.None;
                     }
 
-                    return shadowsRendered;
+                    Shadows = shadowsRendered;
+                    return;
                 }
             }
 
-            return false;
+            Shadows = false;
+            return;
         }
 
         private bool RenderShadows(ref CullResults cullResults, ref VisibleLight shadowLight, int shadowLightIndex, ref ScriptableRenderContext context, Color backgroundColor)

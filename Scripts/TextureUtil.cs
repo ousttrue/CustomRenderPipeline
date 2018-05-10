@@ -63,9 +63,9 @@ namespace CustomRP
             CoreUtils.Destroy(m_BlitMaterial);
         }
 
-        public void SetupFrameRenderingConfiguration(out FrameRenderingConfiguration configuration, CameraContext cameraContext, bool shadows, ShadowManager shadowManager)
+        public FrameRenderingConfiguration SetupFrameRenderingConfiguration(CameraContext cameraContext, ShadowManager shadowManager)
         {
-            configuration = (cameraContext.StereoEnabled) ? FrameRenderingConfiguration.Stereo : FrameRenderingConfiguration.None;
+            var configuration = (cameraContext.StereoEnabled) ? FrameRenderingConfiguration.Stereo : FrameRenderingConfiguration.None;
             if (cameraContext.StereoEnabled && XRSettings.eyeTextureDesc.dimension == TextureDimension.Tex2DArray)
                 m_IntermediateTextureArray = true;
             else
@@ -103,7 +103,7 @@ namespace CustomRP
             if (cameraContext.SceneViewCamera)
                 m_RequireDepthTexture = true;
 
-            if (shadows)
+            if (shadowManager.Shadows)
             {
                 m_RequireDepthTexture = shadowManager.IsScreenSpace;
 
@@ -122,7 +122,7 @@ namespace CustomRP
                 // If msaa is enabled we don't use a depth renderbuffer as we might not have support to Texture2DMS to resolve depth.
                 // Instead we use a depth prepass and whenever depth is needed we use the 1 sample depth from prepass.
                 // Screen space shadows require depth before opaque shading.
-                if (!msaaEnabled && !shadows)
+                if (!msaaEnabled && !shadowManager.Shadows)
                 {
                     bool supportsDepthCopy = m_CopyTextureSupport != CopyTextureSupport.None && m_Asset.CopyDepthShader.isSupported;
                     m_DepthRenderBuffer = true;
@@ -147,6 +147,8 @@ namespace CustomRP
 
             if (intermediateTexture)
                 configuration |= FrameRenderingConfiguration.IntermediateTexture;
+
+            return configuration;
         }
 
         void Blit(CommandBuffer cmd, FrameRenderingConfiguration renderingConfig, RenderTargetIdentifier sourceRT, RenderTargetIdentifier destRT, Camera camera, Material material = null)
