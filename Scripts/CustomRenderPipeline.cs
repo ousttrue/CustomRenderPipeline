@@ -82,7 +82,7 @@ namespace CustomRP
             if (QualitySettings.antiAliasing != m_Asset.MSAASampleCount)
                 QualitySettings.antiAliasing = m_Asset.MSAASampleCount;
 
-            Shader.globalRenderPipeline = "CustomRenderPipeline";
+            Shader.globalRenderPipeline = "LightweightPipeline";
 
             m_ErrorMaterial = CoreUtils.CreateEngineMaterial("Hidden/InternalErrorShader");
 
